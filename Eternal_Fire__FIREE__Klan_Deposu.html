@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eternal Fire [FIREE] - Klan Deposu</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'eternal-fire-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        
+        let app, db, auth, currentUser;
+        
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        }
+
+        let inventories = [];
+        let myData = null;
+        let isUsernameSet = false;
+        let username = "";
+
+        const loadingScreen = document.getElementById('loading-screen');
+        const loginScreen = document.getElementById('login-screen');
+        const dashboard = document.getElementById('dashboard');
+        
+        async function init() {
+            if (!auth) {
+                showError("Firebase yapılandırması eksik.");
+                return;
+            }
+
+            try {
+                const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (token) {
+                    await signInWithCustomToken(auth, token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                currentUser = auth.currentUser;
+                listenToData();
+            } catch (error) {
+                console.error("Kimlik doğrulama hatası:", error);
+                showError("Giriş yapılamadı. Lütfen sayfayı yenileyin.");
+            }
+        }
+
+        function listenToData() {
+            if (!currentUser || !db) return;
+
+            const invCollection = collection(db, 'artifacts', appId, 'public', 'data', 'inventories');
+            
+            onSnapshot(invCollection, (snapshot) => {
+                inventories = [];
+                myData = null;
+
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    data.uid = doc.id;
+                    inventories.push(data);
+
+                    if (doc.id === currentUser.uid) {
+                        myData = data;
+                        isUsernameSet = true;
+                        username = data.username;
+                    }
+                });
+
+                updateUI();
+                loadingScreen.classList.add('hidden');
+
+            }, (error) => {
+                console.error("Veri çekme hatası:", error);
+                showError("Veriler yüklenirken bir hata oluştu.");
+            });
+        }
+
+        function updateUI() {
+            if (!isUsernameSet) {
+                loginScreen.classList.remove('hidden');
+                dashboard.classList.add('hidden');
+            } else {
+                loginScreen.classList.add('hidden');
+                dashboard.classList.remove('hidden');
+                
+                document.getElementById('display-username').textContent = username;
+                
+                document.getElementById('input-hammers').value = myData ? (myData.hammers || 0) : 0;
+                document.getElementById('input-mount-keys').value = myData ? (myData.mountKeys || 0) : 0;
+                document.getElementById('input-mergeable-mounts').value = myData ? (myData.mergeableMounts || 0) : 0;
+                document.getElementById('input-egg-shells').value = myData ? (myData.eggShells || 0) : 0;
+                document.getElementById('input-mergeable-eggs').value = myData ? (myData.mergeableEggs || 0) : 0;
+                document.getElementById('input-skills').value = myData ? (myData.skills || 0) : 0;
+
+                renderLeaderboard();
+            }
+        }
+
+        function renderLeaderboard() {
+            const tbody = document.getElementById('leaderboard-body');
+            tbody.innerHTML = '';
+
+            let tHammers = 0, tMountKeys = 0, tMergeMounts = 0, tEggShells = 0, tMergeEggs = 0, tSkills = 0;
+
+            const sortedInventories = [...inventories].sort((a, b) => {
+                const totalA = (a.hammers||0) + (a.mountKeys||0) + (a.skills||0);
+                const totalB = (b.hammers||0) + (b.mountKeys||0) + (b.skills||0);
+                return totalB - totalA;
+            });
+
+            if (sortedInventories.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="py-4 text-center text-gray-500 italic">Henüz veri yok. İlk ekleyen siz olun!</td></tr>`;
+                return;
+            }
+
+            sortedInventories.forEach((inv, index) => {
+                const h = inv.hammers || 0;
+                const mk = inv.mountKeys || 0;
+                const mm = inv.mergeableMounts || 0;
+                const es = inv.eggShells || 0;
+                const me = inv.mergeableEggs || 0;
+                const sk = inv.skills || 0;
+
+                tHammers += h;
+                tMountKeys += mk;
+                tMergeMounts += mm;
+                tEggShells += es;
+                tMergeEggs += me;
+                tSkills += sk;
+
+                const isMe = inv.uid === currentUser.uid;
+                const rowClass = isMe ? 'bg-amber-900/40 border-l-2 border-amber-500' : 'border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors';
+                
+                const tr = document.createElement('tr');
+                tr.className = rowClass;
+                tr.innerHTML = `
+                    <td class="py-3 px-4 flex items-center gap-2">
+                        <span class="text-gray-500 text-xs w-4">${index + 1}.</span>
+                        <span class="${isMe ? 'text-amber-400 font-bold' : 'text-gray-200'}">
+                            ${escapeHTML(inv.username)}
+                            ${isMe ? '<i class="fas fa-user-circle ml-1 text-xs"></i>' : ''}
+                        </span>
+                    </td>
+                    <td class="py-3 px-2 text-center text-gray-300 font-medium">${formatNumber(h)}</td>
+                    <td class="py-3 px-2 text-center text-amber-300 font-medium">${formatNumber(mk)}</td>
+                    <td class="py-3 px-2 text-center text-orange-400 font-medium">${formatNumber(mm)}</td>
+                    <td class="py-3 px-2 text-center text-stone-300 font-medium">${formatNumber(es)}</td>
+                    <td class="py-3 px-2 text-center text-yellow-500 font-medium">${formatNumber(me)}</td>
+                    <td class="py-3 px-2 text-center text-green-400 font-bold">${formatNumber(sk)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('total-hammers').textContent = formatNumber(tHammers);
+            document.getElementById('total-mount-keys').textContent = formatNumber(tMountKeys);
+            document.getElementById('total-merge-mounts').textContent = formatNumber(tMergeMounts);
+            document.getElementById('total-egg-shells').textContent = formatNumber(tEggShells);
+            document.getElementById('total-merge-eggs').textContent = formatNumber(tMergeEggs);
+            document.getElementById('total-skills').textContent = formatNumber(tSkills);
+            
+            document.getElementById('total-members').textContent = sortedInventories.length;
+        }
+
+        // Event Listeners
+        document.getElementById('btn-set-username').addEventListener('click', async () => {
+            const input = document.getElementById('input-username');
+            const name = input.value.trim();
+            
+            if (name.length < 3 || name.length > 20) {
+                showToast("Kullanıcı adı 3-20 karakter arasında olmalıdır.", 'error');
+                return;
+            }
+
+            const btn = document.getElementById('btn-set-username');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventories', currentUser.uid);
+                await setDoc(docRef, {
+                    username: name,
+                    hammers: 0, mountKeys: 0, mergeableMounts: 0, eggShells: 0, mergeableEggs: 0, skills: 0,
+                    updatedAt: Date.now()
+                });
+                
+                isUsernameSet = true;
+                username = name;
+                showToast("Oyuncu adı kaydedildi!", 'success');
+            } catch (error) {
+                console.error("Kayıt hatası:", error);
+                showToast("Kaydedilemedi.", 'error');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+
+        document.getElementById('form-inventory').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentUser || !db) return;
+
+            const h = parseInt(document.getElementById('input-hammers').value) || 0;
+            const mk = parseInt(document.getElementById('input-mount-keys').value) || 0;
+            const mm = parseInt(document.getElementById('input-mergeable-mounts').value) || 0;
+            const es = parseInt(document.getElementById('input-egg-shells').value) || 0;
+            const me = parseInt(document.getElementById('input-mergeable-eggs').value) || 0;
+            const sk = parseInt(document.getElementById('input-skills').value) || 0;
+
+            const btn = document.getElementById('btn-save-inventory');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Kaydediliyor...';
+            btn.disabled = true;
+
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventories', currentUser.uid);
+                await setDoc(docRef, {
+                    username: username,
+                    hammers: h,
+                    mountKeys: mk,
+                    mergeableMounts: mm,
+                    eggShells: es,
+                    mergeableEggs: me,
+                    skills: sk,
+                    updatedAt: Date.now()
+                }, { merge: true });
+                
+                showToast("Malzemeler güncellendi!", 'success');
+            } catch (error) {
+                console.error("Güncelleme hatası:", error);
+                showToast("Bağlantınızı kontrol edin.", 'error');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(2).replace(/\.00$/, '') + 'm';
+            if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+            return num.toString();
+        }
+
+        function escapeHTML(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function showError(msg) {
+            const errDiv = document.getElementById('error-message');
+            errDiv.textContent = msg;
+            errDiv.classList.remove('hidden');
+            loadingScreen.classList.add('hidden');
+        }
+
+        function showToast(msg, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            
+            if (type === 'success') {
+                toast.className = 'fixed top-20 right-4 bg-green-600/90 text-white px-6 py-3 rounded-lg shadow-lg border border-green-500 z-50 transition-all duration-300 translate-x-0 opacity-100 font-rajdhani tracking-wide';
+            } else {
+                toast.className = 'fixed top-20 right-4 bg-red-600/90 text-white px-6 py-3 rounded-lg shadow-lg border border-red-500 z-50 transition-all duration-300 translate-x-0 opacity-100 font-rajdhani tracking-wide';
+            }
+
+            setTimeout(() => {
+                toast.classList.replace('translate-x-0', 'translate-x-20');
+                toast.classList.replace('opacity-100', 'opacity-0');
+            }, 3000);
+        }
+
+        window.addEventListener('load', init);
+
+    </script>
+
+    <style>
+        body {
+            background-color: #0c0a09;
+            background-image: 
+                radial-gradient(circle at 50% 0%, #3a1a05 0%, transparent 50%),
+                url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 20.5V18H0v-2h20v-2.5L25 17l-5 3.5zm0-11V7H0V5h20V2.5L25 6l-5 3.5zm0 22v-2.5H0v-2h20v-2.5l5 3.5-5 3.5z' fill='%231f1510' fill-opacity='0.4' fill-rule='evenodd'/%3E%3C/svg%3E");
+            color: #e2e8f0;
+            font-family: 'Rajdhani', sans-serif;
+        }
+        
+        h1, h2, h3, .font-cinzel {
+            font-family: 'Cinzel', serif;
+        }
+
+        .forge-panel {
+            background: rgba(20, 15, 10, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.7), inset 0 0 20px rgba(245, 158, 11, 0.05);
+        }
+
+        .forge-input {
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            color: #fcd34d;
+            transition: all 0.2s;
+        }
+        .forge-input:focus {
+            outline: none;
+            border-color: #f59e0b;
+            box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+            background: rgba(20, 10, 0, 0.8);
+        }
+
+        .text-gradient-gold {
+            background: linear-gradient(to right, #fcd34d, #f59e0b, #d97706);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .btn-gold {
+            background: linear-gradient(45deg, #d97706, #b45309);
+            border: 1px solid #fbbf24;
+            color: #fff;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+            transition: all 0.3s;
+        }
+        .btn-gold:hover:not(:disabled) {
+            background: linear-gradient(45deg, #f59e0b, #d97706);
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.5);
+        }
+        .btn-gold:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        th {
+            background: rgba(245, 158, 11, 0.1);
+            border-bottom: 2px solid rgba(245, 158, 11, 0.3);
+            color: #fcd34d;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        td {
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type="number"] {
+            -moz-appearance: textfield;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #111; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #d97706; 
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col relative">
+
+    <div id="toast" class="fixed top-20 right-4 bg-green-600 text-white px-6 py-3 rounded shadow-lg z-50 opacity-0 translate-x-20 transition-all pointer-events-none">
+        Bildirim
+    </div>
+
+    <!-- Header -->
+    <header class="border-b border-amber-900/50 bg-black/80 sticky top-0 z-40 backdrop-blur-md shadow-lg shadow-black/50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center gap-4">
+                <!-- Golden Infinity Dragon Placeholder Logo -->
+                <div class="relative w-12 h-12 rounded-full overflow-hidden border-2 border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]">
+                    <img src="https://placehold.co/100x100/1a0f0a/f59e0b?text=FIREE" alt="FIREE Logo" class="w-full h-full object-cover">
+                </div>
+                <div>
+                    <h1 class="text-xl sm:text-2xl font-bold tracking-widest text-gradient-gold m-0 leading-none">ETERNAL FIRE <span class="text-amber-700">[FIREE]</span></h1>
+                    <p class="text-xs text-amber-500/70 font-rajdhani tracking-[0.1em] uppercase mt-1"><i class="fas fa-fire mr-1"></i> Seviye-S+ Klan Deposu</p>
+                </div>
+            </div>
+            <div id="user-status" class="hidden sm:flex items-center gap-2 text-sm bg-black/50 px-4 py-1.5 rounded-full border border-amber-900/50">
+                <i class="fas fa-user-shield text-amber-600"></i>
+                <span id="display-username" class="text-amber-400 font-bold"></span>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow w-full max-w-7xl mx-auto px-4 py-8 flex flex-col items-center">
+        
+        <!-- Loading -->
+        <div id="loading-screen" class="flex flex-col items-center justify-center py-20 w-full">
+            <i class="fas fa-dragon fa-bounce text-5xl text-amber-500 mb-4"></i>
+            <h2 class="text-xl text-amber-200 font-cinzel animate-pulse">Klan Kayıtları Çekiliyor...</h2>
+            <div id="error-message" class="hidden mt-6 bg-red-900/50 border border-red-500 text-red-200 px-6 py-4 rounded-lg"></div>
+        </div>
+
+        <!-- Login / Username Form -->
+        <div id="login-screen" class="hidden w-full max-w-md animate-fade-in mt-10">
+            <div class="forge-panel rounded-xl p-8 text-center shadow-2xl relative overflow-hidden">
+                <div class="absolute -top-20 -right-20 w-40 h-40 bg-amber-600/20 rounded-full blur-3xl"></div>
+                
+                <i class="fas fa-id-card text-5xl text-amber-600 mb-4 drop-shadow-lg"></i>
+                <h2 class="text-2xl font-bold mb-2 font-cinzel text-white">Oyuncu Adı</h2>
+                <p class="text-amber-200/60 mb-6 text-sm">Eternal Fire klanındaki güncel oyuncu adınızı giriniz.</p>
+                
+                <div class="flex flex-col gap-4">
+                    <div class="relative">
+                        <i class="fas fa-user absolute left-4 top-1/2 transform -translate-y-1/2 text-amber-500/70"></i>
+                        <input type="text" id="input-username" class="forge-input w-full pl-12 pr-4 py-3 rounded-lg text-lg font-bold tracking-wide" placeholder="Oyuncu Adı" maxlength="20">
+                    </div>
+                    <button id="btn-set-username" class="btn-gold w-full py-3 rounded-lg font-bold tracking-widest uppercase font-cinzel text-lg">
+                        Giriş Yap <i class="fas fa-chevron-right ml-1"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard Layout -->
+        <div id="dashboard" class="hidden w-full flex flex-col gap-8">
+            
+            <!-- Top Section: Data Entry Form -->
+            <div class="forge-panel rounded-xl p-6 shadow-xl max-w-4xl mx-auto w-full">
+                <div class="border-b border-amber-900/50 pb-3 mb-5 flex justify-center items-center">
+                    <h2 class="text-2xl font-bold font-cinzel text-white flex items-center gap-3">
+                        <i class="fas fa-dungeon text-amber-500"></i> Malzeme Girişi
+                    </h2>
+                </div>
+
+                <form id="form-inventory" class="space-y-6">
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
+                        
+                        <!-- Çekiç -->
+                        <div class="flex flex-col gap-1.5 p-3 rounded-lg bg-black/40 border border-gray-800 hover:border-amber-700/50 transition-colors">
+                            <label class="text-xs font-bold text-gray-300 uppercase flex items-center gap-2">
+                                <i class="fas fa-gavel text-gray-400"></i> Çekiç Sayısı
+                            </label>
+                            <input type="number" id="input-hammers" min="0" class="forge-input w-full px-3 py-2 rounded text-right font-bold text-xl" value="0">
+                        </div>
+                        
+                        <!-- Binek Anahtarı -->
+                        <div class="flex flex-col gap-1.5 p-3 rounded-lg bg-black/40 border border-gray-800 hover:border-amber-700/50 transition-colors">
+                            <label class="text-xs font-bold text-amber-300 uppercase flex items-center gap-2">
+                                <i class="fas fa-key text-amber-400"></i> Binek Anahtarı
+                            </label>
+                            <input type="number" id="input-mount-keys" min="0" class="forge-input w-full px-3 py-2 rounded text-right font-bold text-xl" value="0">
+                        </div>
+
+                        <!-- Birleştirilebilir Binek -->
+                        <div class="flex flex-col gap-1.5 p-3 rounded-lg bg-black/40 border border-gray-800 hover:border-amber-700/50 transition-colors">
+                            <label class="text-xs font-bold text-orange-400 uppercase flex items-center gap-2">
+                                <i class="fas fa-horse-head text-orange-500"></i> B. Binek
+                            </label>
+                            <input type="number" id="input-mergeable-mounts" min="0" class="forge-input w-full px-3 py-2 rounded text-right font-bold text-xl" value="0">
+                        </div>
+
+                        <!-- Yumurta Kabuğu -->
+                        <div class="flex flex-col gap-1.5 p-3 rounded-lg bg-black/40 border border-gray-800 hover:border-amber-700/50 transition-colors">
+                            <label class="text-xs font-bold text-stone-300 uppercase flex items-center gap-2">
+                                <i class="fas fa-egg text-stone-400"></i> Yumurta Kabuğu
+                            </label>
+                            <input type="number" id="input-egg-shells" min="0" class="forge-input w-full px-3 py-2 rounded text-right font-bold text-xl" value="0">
+                        </div>
+
+                        <!-- Birleştirilebilir Yumurta -->
+                        <div class="flex flex-col gap-1.5 p-3 rounded-lg bg-black/40 border border-gray-800 hover:border-amber-700/50 transition-colors">
+                            <label class="text-xs font-bold text-yellow-500 uppercase flex items-center gap-2">
+                                <i class="fas fa-circle-plus text-yellow-400"></i> B. Yumurta
+                            </label>
+                            <input type="number" id="input-mergeable-eggs" min="0" class="forge-input w-full px-3 py-2 rounded text-right font-bold text-xl" value="0">
+                        </div>
+
+                        <!-- Beceri Stoğu -->
+                        <div class="flex flex-col gap-1.5 p-3 rounded-lg bg-black/40 border border-gray-800 hover:border-amber-700/50 transition-colors">
+                            <label class="text-xs font-bold text-green-400 uppercase flex items-center gap-2">
+                                <i class="fas fa-scroll text-green-500"></i> Beceri Stoğu
+                            </label>
+                            <input type="number" id="input-skills" min="0" class="forge-input w-full px-3 py-2 rounded text-right font-bold text-xl" value="0">
+                        </div>
+
+                    </div>
+
+                    <div class="pt-2 flex justify-center">
+                        <button type="submit" id="btn-save-inventory" class="btn-gold px-12 py-3.5 rounded-lg font-bold tracking-widest uppercase font-cinzel text-lg shadow-xl shadow-amber-900/40">
+                            <i class="fas fa-save mr-2"></i> Kaydet / Güncelle
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Bottom Section: Grand Total Table -->
+            <div class="forge-panel rounded-xl p-0 shadow-xl overflow-hidden w-full">
+                <div class="p-4 border-b border-amber-900/50 bg-black/60 flex justify-between items-center">
+                    <h2 class="text-xl font-bold font-cinzel text-white flex items-center gap-2">
+                        <i class="fas fa-list-ol text-amber-500"></i> Genel Toplam Tablosu
+                    </h2>
+                    <span class="text-xs font-rajdhani bg-amber-900/30 text-amber-300 px-3 py-1 rounded border border-amber-800">
+                        Kayıtlı Oyuncu: <span id="total-members" class="font-bold">0</span>
+                    </span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[700px]">
+                        <thead>
+                            <tr>
+                                <th class="py-3 px-4">Oyuncu</th>
+                                <th class="py-3 px-2 text-center" title="Çekiç Sayısı"><i class="fas fa-gavel mr-1"></i> Çekiç</th>
+                                <th class="py-3 px-2 text-center" title="Binek Anahtarı"><i class="fas fa-key mr-1"></i> B. Anahtar</th>
+                                <th class="py-3 px-2 text-center" title="Birleştirilebilir Binek"><i class="fas fa-horse-head mr-1"></i> B. Binek</th>
+                                <th class="py-3 px-2 text-center" title="Yumurta Kabuğu"><i class="fas fa-egg mr-1"></i> Y. Kabuğu</th>
+                                <th class="py-3 px-2 text-center" title="Birleştirilebilir Yumurta"><i class="fas fa-circle-plus mr-1"></i> B. Yumurta</th>
+                                <th class="py-3 px-2 text-center" title="Beceri Stoğu"><i class="fas fa-scroll mr-1"></i> Beceri</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body" class="text-md">
+                            <!-- JS ile doldurulacak -->
+                        </tbody>
+                        <tfoot class="bg-gradient-to-r from-amber-950 to-black border-t-2 border-amber-600 shadow-[0_-5px_20px_rgba(0,0,0,0.6)]">
+                            <tr>
+                                <td class="py-5 px-4 text-right font-cinzel text-amber-400 font-bold text-lg uppercase tracking-wider">
+                                    Genel Toplam <i class="fas fa-arrow-right ml-2"></i>
+                                </td>
+                                <td class="py-5 px-2 text-center text-gray-300 font-bold text-lg" id="total-hammers">0</td>
+                                <td class="py-5 px-2 text-center text-amber-300 font-bold text-lg" id="total-mount-keys">0</td>
+                                <td class="py-5 px-2 text-center text-orange-400 font-bold text-lg" id="total-merge-mounts">0</td>
+                                <td class="py-5 px-2 text-center text-stone-300 font-bold text-lg" id="total-egg-shells">0</td>
+                                <td class="py-5 px-2 text-center text-yellow-400 font-bold text-lg" id="total-merge-eggs">0</td>
+                                <td class="py-5 px-2 text-center text-green-400 font-bold text-lg" id="total-skills">0</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </main>
+</body>
+</html>
